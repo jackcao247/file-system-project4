@@ -134,6 +134,59 @@ static int loadMeta()
     return 0;
 }
 
+static int findDir(char *fname)
+{
+    int i;
+
+    for (i = 0; i < MAX_FILES; i++)
+    {
+        if (dir[i].used && strcmp(dir[i].name, fname) == 0)
+            return i;
+    }
+
+    return -1;
+}
+
+static int findFreeDir()
+{
+    int i;
+
+    for (i = 0; i < MAX_FILES; i++)
+    {
+        if (!dir[i].used)
+            return i;
+    }
+
+    return -1;
+}
+
+static int isOpen(int dir_i)
+{
+    int i;
+
+    for (i = 0; i < MAX_FILDES; i++)
+    {
+        if (fd_table[i].used && fd_table[i].dir_i == dir_i)
+            return 1;
+    }
+
+    return 0;
+}
+
+static void freeChain(int first_blk)
+{
+    int now;
+    int next;
+
+    now = first_blk;
+    while (now >= 0)
+    {
+        next = fat[now];
+        fat[now] = FAT_FREE;
+        now = next;
+    }
+}
+
 int make_fs(char *disk_name)
 {
     if (!disk_name)
@@ -225,14 +278,81 @@ int fs_close(int fildes)
 
 int fs_create(char *fname)
 {
-    (void)fname;
-    return -1;
+    int dir_i;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (!fname)
+    {
+        fprintf(stderr, "Unfound filename\n");
+        return -1;
+    }
+
+    if ((int)strlen(fname) > MAX_FNAME)
+    {
+        fprintf(stderr, "Filename too long\n");
+        return -1;
+    }
+
+    if (findDir(fname) >= 0)
+    {
+        fprintf(stderr, "File already exists\n");
+        return -1;
+    }
+
+    dir_i = findFreeDir();
+    if (dir_i < 0)
+    {
+        fprintf(stderr, "Directory full\n");
+        return -1;
+    }
+
+    dir[dir_i].used = 1;
+    strcpy(dir[dir_i].name, fname);
+    dir[dir_i].size = 0;
+    dir[dir_i].first_blk = FAT_EOC;
+
+    return 0;
 }
 
 int fs_delete(char *fname)
 {
-    (void)fname;
-    return -1;
+    int dir_i;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (!fname)
+    {
+        fprintf(stderr, "Unfound filename\n");
+        return -1;
+    }
+
+    dir_i = findDir(fname);
+    if (dir_i < 0)
+    {
+        fprintf(stderr, "Unfound file\n");
+        return -1;
+    }
+
+    if (isOpen(dir_i))
+    {
+        fprintf(stderr, "File opened\n");
+        return -1;
+    }
+
+    freeChain(dir[dir_i].first_blk);
+    memset(&dir[dir_i], 0, sizeof(DirEnt));
+    dir[dir_i].first_blk = FAT_EOC;
+
+    return 0;
 }
 
 int fs_read(int fildes, void *buf, size_t nbyte)
