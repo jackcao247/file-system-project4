@@ -7,8 +7,8 @@
 #define FS_SIG 0xf0f03410
 
 #define MAX_FILES 64
-#define MAX_FILDES 32
 #define MAX_FNAME 15
+#define MAX_FILDES 32
 
 #define DATA_BLOCKS 4096
 
@@ -21,14 +21,6 @@
 
 #define FAT_FREE -1
 #define FAT_EOC -2
-
-/*
- * Simple layout plan for now:
- * block 0      : super block
- * block 1 - 4  : FAT (4096 entries, int each)
- * block 5      : root directory
- * block 6 ...  : file data blocks
- */
 
 typedef struct
 {
@@ -62,12 +54,8 @@ static int fat[DATA_BLOCKS];
 static DirEnt dir[MAX_FILES];
 static FdEnt fd_table[MAX_FILDES];
 
-int make_fs(char *disk_name)
+static void initSB()
 {
-    int i;
-
-    (void)disk_name;
-
     sb.sig = FS_SIG;
     sb.fat_start = FAT_START;
     sb.fat_blocks = FAT_BLOCKS;
@@ -75,25 +63,130 @@ int make_fs(char *disk_name)
     sb.dir_blocks = DIR_BLOCKS;
     sb.data_start = DATA_START;
     sb.data_blocks = DATA_BLOCKS;
+}
+
+static void clrMeta()
+{
+    int i;
+
+    initSB();
 
     for (i = 0; i < DATA_BLOCKS; i++)
         fat[i] = FAT_FREE;
 
     memset(dir, 0, sizeof(dir));
     memset(fd_table, 0, sizeof(fd_table));
-    mounted = 0;
+}
 
-    return -1;
+static int saveMeta()
+{
+    char buf[BLOCK_SIZE];
+    int i;
+
+    memset(buf, 0, BLOCK_SIZE);
+    memcpy(buf, &sb, sizeof(sb));
+    if (block_write(SUPER_BLOCK, buf) < 0)
+        return -1;
+
+    for (i = 0; i < FAT_BLOCKS; i++)
+    {
+        memcpy(buf, ((char *)fat) + (i * BLOCK_SIZE), BLOCK_SIZE);
+        if (block_write(FAT_START + i, buf) < 0)
+            return -1;
+    }
+
+    memset(buf, 0, BLOCK_SIZE);
+    memcpy(buf, dir, sizeof(dir));
+    if (block_write(DIR_START, buf) < 0)
+        return -1;
+
+    return 0;
+}
+
+static int loadMeta()
+{
+    char buf[BLOCK_SIZE];
+    int i;
+
+    if (block_read(SUPER_BLOCK, buf) < 0)
+        return -1;
+    memcpy(&sb, buf, sizeof(sb));
+
+    if (sb.sig != (int)FS_SIG)
+    {
+        fprintf(stderr, "Unfound file system\n");
+        return -1;
+    }
+
+    for (i = 0; i < FAT_BLOCKS; i++)
+    {
+        if (block_read(FAT_START + i, buf) < 0)
+            return -1;
+        memcpy(((char *)fat) + (i * BLOCK_SIZE), buf, BLOCK_SIZE);
+    }
+
+    if (block_read(DIR_START, buf) < 0)
+        return -1;
+    memcpy(dir, buf, sizeof(dir));
+
+    memset(fd_table, 0, sizeof(fd_table));
+
+    return 0;
+}
+
+int make_fs(char *disk_name)
+{
+    if (!disk_name)
+    {
+        fprintf(stderr, "Unfound filename\n");
+        return -1;
+    }
+
+    if (make_disk(disk_name) < 0)
+        return -1;
+
+    if (open_disk(disk_name) < 0)
+        return -1;
+
+    clrMeta();
+
+    if (saveMeta() < 0)
+    {
+        close_disk();
+        return -1;
+    }
+
+    if (close_disk() < 0)
+        return -1;
+
+    return 0;
 }
 
 int mount_fs(char *disk_name)
 {
-    (void)disk_name;
+    if (!disk_name)
+    {
+        fprintf(stderr, "Unfound filename\n");
+        return -1;
+    }
 
     if (mounted)
+    {
+        fprintf(stderr, "File system mounted\n");
+        return -1;
+    }
+
+    if (open_disk(disk_name) < 0)
         return -1;
 
-    return -1;
+    if (loadMeta() < 0)
+    {
+        close_disk();
+        return -1;
+    }
+
+    mounted = 1;
+    return 0;
 }
 
 int umount_fs(char *disk_name)
@@ -101,9 +194,21 @@ int umount_fs(char *disk_name)
     (void)disk_name;
 
     if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    memset(fd_table, 0, sizeof(fd_table));
+
+    if (saveMeta() < 0)
         return -1;
 
-    return -1;
+    if (close_disk() < 0)
+        return -1;
+
+    mounted = 0;
+    return 0;
 }
 
 int fs_open(char *fname)
