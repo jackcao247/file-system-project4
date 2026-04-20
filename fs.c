@@ -160,6 +160,19 @@ static int findFreeDir()
     return -1;
 }
 
+static int findFreeFd()
+{
+    int i;
+
+    for (i = 0; i < MAX_FILDES; i++)
+    {
+        if (!fd_table[i].used)
+            return i;
+    }
+
+    return -1;
+}
+
 static int isOpen(int dir_i)
 {
     int i;
@@ -266,14 +279,65 @@ int umount_fs(char *disk_name)
 
 int fs_open(char *fname)
 {
-    (void)fname;
-    return -1;
+    int dir_i;
+    int fd_i;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (!fname)
+    {
+        fprintf(stderr, "Unfound filename\n");
+        return -1;
+    }
+
+    dir_i = findDir(fname);
+    if (dir_i < 0)
+    {
+        fprintf(stderr, "Unfound file\n");
+        return -1;
+    }
+
+    fd_i = findFreeFd();
+    if (fd_i < 0)
+    {
+        fprintf(stderr, "Too many opened files\n");
+        return -1;
+    }
+
+    fd_table[fd_i].used = 1;
+    fd_table[fd_i].dir_i = dir_i;
+    fd_table[fd_i].offset = 0;
+
+    return fd_i;
 }
 
 int fs_close(int fildes)
 {
-    (void)fildes;
-    return -1;
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    memset(&fd_table[fildes], 0, sizeof(FdEnt));
+
+    return 0;
 }
 
 int fs_create(char *fname)
