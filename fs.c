@@ -187,6 +187,22 @@ static void freeChain(int first_blk)
     }
 }
 
+static int getBlk(int first_blk, int blk_i)
+{
+    int now;
+    int i;
+
+    now = first_blk;
+    for (i = 0; i < blk_i; i++)
+    {
+        if (now < 0)
+            return FAT_EOC;
+        now = fat[now];
+    }
+
+    return now;
+}
+
 static int findFreeFd()
 {
     int i;
@@ -421,10 +437,77 @@ int fs_delete(char *fname)
 
 int fs_read(int fildes, void *buf, size_t nbyte)
 {
-    (void)fildes;
-    (void)buf;
-    (void)nbyte;
-    return -1;
+    int dir_i;
+    int size;
+    int offset;
+    int left;
+    int done;
+    int blk_i;
+    int blk;
+    int in_blk;
+    int now_read;
+    char blk_buf[BLOCK_SIZE];
+    char *out;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    if (!buf)
+    {
+        fprintf(stderr, "Unfound buffer\n");
+        return -1;
+    }
+
+    dir_i = fd_table[fildes].dir_i;
+    size = dir[dir_i].size;
+    offset = fd_table[fildes].offset;
+
+    if (offset >= size)
+        return 0;
+
+    left = size - offset;
+    if ((int)nbyte < left)
+        left = (int)nbyte;
+
+    done = 0;
+    out = (char *)buf;
+
+    while (done < left)
+    {
+        blk_i = (offset + done) / BLOCK_SIZE;
+        in_blk = (offset + done) % BLOCK_SIZE;
+        blk = getBlk(dir[dir_i].first_blk, blk_i);
+        if (blk < 0)
+            break;
+
+        if (block_read(DATA_START + blk, blk_buf) < 0)
+            break;
+
+        now_read = BLOCK_SIZE - in_blk;
+        if (now_read > (left - done))
+            now_read = left - done;
+
+        memcpy(out + done, blk_buf + in_blk, now_read);
+        done += now_read;
+    }
+
+    fd_table[fildes].offset += done;
+    return done;
 }
 
 int fs_write(int fildes, void *buf, size_t nbyte)
