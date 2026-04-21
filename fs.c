@@ -216,6 +216,65 @@ static int findFreeFd()
     return -1;
 }
 
+static int findFreeBlk()
+{
+    int i;
+
+    for (i = 0; i < DATA_BLOCKS; i++)
+    {
+        if (fat[i] == FAT_FREE)
+            return i;
+    }
+
+    return -1;
+}
+
+static int addBlk(int dir_i)
+{
+    int new_blk;
+    int now;
+    char buf[BLOCK_SIZE];
+
+    new_blk = findFreeBlk();
+    if (new_blk < 0)
+        return -1;
+
+    fat[new_blk] = FAT_EOC;
+
+    if (dir[dir_i].first_blk == FAT_EOC)
+    {
+        dir[dir_i].first_blk = new_blk;
+    }
+    else
+    {
+        now = dir[dir_i].first_blk;
+        while (fat[now] != FAT_EOC)
+            now = fat[now];
+        fat[now] = new_blk;
+    }
+
+    memset(buf, 0, BLOCK_SIZE);
+    if (block_write(DATA_START + new_blk, buf) < 0)
+    {
+        fat[new_blk] = FAT_FREE;
+        if (dir[dir_i].first_blk == new_blk)
+        {
+            dir[dir_i].first_blk = FAT_EOC;
+        }
+        else
+        {
+            now = dir[dir_i].first_blk;
+            while (fat[now] != new_blk)
+                now = fat[now];
+            fat[now] = FAT_EOC;
+        }
+
+        return -1;
+    }
+
+    return new_blk;
+}
+
 int make_fs(char *disk_name)
 {
     if (!disk_name)
@@ -512,10 +571,84 @@ int fs_read(int fildes, void *buf, size_t nbyte)
 
 int fs_write(int fildes, void *buf, size_t nbyte)
 {
-    (void)fildes;
-    (void)buf;
-    (void)nbyte;
-    return -1;
+    int dir_i;
+    int offset;
+    int done;
+    int blk_i;
+    int blk;
+    int in_blk;
+    int now_write;
+    char blk_buf[BLOCK_SIZE];
+    char *in;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    if (!buf)
+    {
+        fprintf(stderr, "Unfound buffer\n");
+        return -1;
+    }
+
+    dir_i = fd_table[fildes].dir_i;
+    offset = fd_table[fildes].offset;
+    done = 0;
+    in = (char *)buf;
+
+    while (done < (int)nbyte)
+    {
+        blk_i = (offset + done) / BLOCK_SIZE;
+        in_blk = (offset + done) % BLOCK_SIZE;
+        blk = getBlk(dir[dir_i].first_blk, blk_i);
+
+        while (blk < 0)
+        {
+            if (addBlk(dir_i) < 0)
+            {
+                fd_table[fildes].offset += done;
+                if (fd_table[fildes].offset > dir[dir_i].size)
+                    dir[dir_i].size = fd_table[fildes].offset;
+                return done;
+            }
+
+            blk = getBlk(dir[dir_i].first_blk, blk_i);
+        }
+
+        if (block_read(DATA_START + blk, blk_buf) < 0)
+            break;
+
+        now_write = BLOCK_SIZE - in_blk;
+        if (now_write > ((int)nbyte - done))
+            now_write = (int)nbyte - done;
+
+        memcpy(blk_buf + in_blk, in + done, now_write);
+
+        if (block_write(DATA_START + blk, blk_buf) < 0)
+            break;
+
+        done += now_write;
+    }
+
+    fd_table[fildes].offset += done;
+    if (fd_table[fildes].offset > dir[dir_i].size)
+        dir[dir_i].size = fd_table[fildes].offset;
+
+    return done;
 }
 
 int fs_get_filesize(int fildes)
