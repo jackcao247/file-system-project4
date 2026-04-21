@@ -160,19 +160,6 @@ static int findFreeDir()
     return -1;
 }
 
-static int findFreeFd()
-{
-    int i;
-
-    for (i = 0; i < MAX_FILDES; i++)
-    {
-        if (!fd_table[i].used)
-            return i;
-    }
-
-    return -1;
-}
-
 static int isOpen(int dir_i)
 {
     int i;
@@ -198,6 +185,19 @@ static void freeChain(int first_blk)
         fat[now] = FAT_FREE;
         now = next;
     }
+}
+
+static int findFreeFd()
+{
+    int i;
+
+    for (i = 0; i < MAX_FILDES; i++)
+    {
+        if (!fd_table[i].used)
+            return i;
+    }
+
+    return -1;
 }
 
 int make_fs(char *disk_name)
@@ -437,15 +437,61 @@ int fs_write(int fildes, void *buf, size_t nbyte)
 
 int fs_get_filesize(int fildes)
 {
-    (void)fildes;
-    return -1;
+    int dir_i;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    dir_i = fd_table[fildes].dir_i;
+    return dir[dir_i].size;
 }
 
 int fs_lseek(int fildes, off_t offset)
 {
-    (void)fildes;
-    (void)offset;
-    return -1;
+    int size;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    size = dir[fd_table[fildes].dir_i].size;
+    if (offset < 0 || offset > size)
+    {
+        fprintf(stderr, "Wrong offset\n");
+        return -1;
+    }
+
+    fd_table[fildes].offset = offset;
+    return 0;
 }
 
 int fs_truncate(int fildes, off_t length)
