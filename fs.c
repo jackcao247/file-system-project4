@@ -712,7 +712,64 @@ int fs_lseek(int fildes, off_t offset)
 
 int fs_truncate(int fildes, off_t length)
 {
-    (void)fildes;
-    (void)length;
-    return -1;
+    int dir_i;
+    int size;
+    int keep_i;
+    int last_blk;
+    int next_blk;
+    int i;
+
+    if (!mounted)
+    {
+        fprintf(stderr, "No file mounted\n");
+        return -1;
+    }
+
+    if (fildes < 0 || fildes >= MAX_FILDES)
+    {
+        fprintf(stderr, "Wrong file id\n");
+        return -1;
+    }
+
+    if (!fd_table[fildes].used)
+    {
+        fprintf(stderr, "File not opened\n");
+        return -1;
+    }
+
+    dir_i = fd_table[fildes].dir_i;
+    size = dir[dir_i].size;
+
+    if (length < 0 || length > size)
+    {
+        fprintf(stderr, "Wrong length\n");
+        return -1;
+    }
+
+    if (length == size)
+        return 0;
+
+    if (length == 0)
+    {
+        freeChain(dir[dir_i].first_blk);
+        dir[dir_i].first_blk = FAT_EOC;
+    }
+    else
+    {
+        keep_i = ((int)length - 1) / BLOCK_SIZE;
+        last_blk = getBlk(dir[dir_i].first_blk, keep_i);
+        next_blk = fat[last_blk];
+        fat[last_blk] = FAT_EOC;
+        freeChain(next_blk);
+    }
+
+    dir[dir_i].size = length;
+
+    for (i = 0; i < MAX_FILDES; i++)
+    {
+        if (fd_table[i].used && fd_table[i].dir_i == dir_i && fd_table[i].offset > length)
+            fd_table[i].offset = length;
+    }
+
+    return 0;
 }
